@@ -1,0 +1,370 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>LESKOBonheur — Éditeur de paroles</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+<style>
+  :root {
+    --brand: #2f6f8f;
+    --bg: #eef3f6;
+    --panel: #ffffff;
+    --text: #1f2d3a;
+    --muted: #8a99a5;
+    --blue: #2f6f8f;
+    --pink: #e0559a;
+    --black: #1f2d3a;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font-family: Georgia, 'Times New Roman', serif;
+  }
+  .wrap {
+    max-width: 820px;
+    margin: 24px auto;
+    background: var(--panel);
+    border-radius: 10px;
+    box-shadow: 0 4px 18px rgba(20, 50, 70, 0.12);
+    overflow: hidden;
+  }
+  header {
+    text-align: center;
+    padding: 22px 20px 12px;
+  }
+  header h1 {
+    margin: 0;
+    font-size: 26px;
+    letter-spacing: 1px;
+    color: var(--brand);
+  }
+  header p {
+    margin: 4px 0 0;
+    font-size: 13px;
+    color: var(--muted);
+    font-style: italic;
+  }
+  .fields {
+    display: flex;
+    gap: 12px;
+    flex-wrap: wrap;
+    padding: 8px 24px 0;
+  }
+  .fields label {
+    flex: 1 1 220px;
+    font-family: Arial, sans-serif;
+    font-size: 12px;
+    color: var(--muted);
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+  .fields input {
+    font: 15px Georgia, serif;
+    padding: 8px 10px;
+    border: 1px solid #c9d6de;
+    border-radius: 6px;
+    color: var(--text);
+  }
+  .toolbar {
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+    padding: 14px 24px;
+    font-family: Arial, sans-serif;
+  }
+  .toolbar button {
+    border: 0;
+    border-radius: 6px;
+    padding: 9px 16px;
+    font-size: 14px;
+    font-weight: bold;
+    color: #fff;
+    cursor: pointer;
+  }
+  .toolbar button:hover { filter: brightness(1.1); }
+  .b-blue { background: var(--blue); }
+  .b-pink { background: var(--pink); }
+  .b-black { background: var(--black); }
+  .b-pdf { background: #fff; color: var(--brand) !important; border: 2px solid var(--brand) !important; margin-left: auto; }
+  #editor {
+    margin: 0 24px 8px;
+    min-height: 420px;
+    padding: 16px 18px;
+    border: 1px solid #c9d6de;
+    border-radius: 8px;
+    background: #fbfdfe;
+    font-size: 17px;
+    line-height: 1.6;
+    outline: none;
+  }
+  #editor:focus { border-color: var(--brand); box-shadow: 0 0 0 3px rgba(47,111,143,.15); }
+  #editor > div { min-height: 1.6em; }
+  #editor > div[data-color="blue"]  { color: var(--blue); }
+  #editor > div[data-color="pink"]  { color: var(--pink); }
+  #editor > div[data-color="black"] { color: var(--black); }
+  .hint {
+    font-family: Arial, sans-serif;
+    font-size: 12px;
+    color: var(--muted);
+    padding: 0 24px 6px;
+  }
+  footer {
+    text-align: center;
+    padding: 14px;
+    font-size: 12px;
+    color: var(--muted);
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>🎶 LESKOBonheur 🎶</h1>
+    <p>Éditeur de paroles — du chant dans les voiles</p>
+  </header>
+
+  <div class="fields">
+    <label>Ton nom
+      <input id="userName" type="text" placeholder="Prénom Nom" autocomplete="name">
+    </label>
+    <label>Titre du chant (optionnel)
+      <input id="songTitle" type="text" placeholder="Don't Worry, Be Happy">
+    </label>
+  </div>
+
+  <div class="toolbar">
+    <button class="b-blue"  data-color="blue">Bleu</button>
+    <button class="b-pink"  data-color="pink">Rose</button>
+    <button class="b-black" data-color="black">Noir</button>
+    <button class="b-pdf" id="exportPdf">Exporter en PDF</button>
+  </div>
+
+  <div id="editor" contenteditable="true" spellcheck="false"><div data-color="black"><br></div></div>
+  <div class="hint">Colle les paroles, sélectionne une ou plusieurs lignes, puis clique sur une couleur.</div>
+
+  <footer>LESKOBonheur — du chant dans les voiles 🌊</footer>
+</div>
+
+<script>
+(function () {
+  var COLORS = { blue: '#2f6f8f', pink: '#e0559a', black: '#1f2d3a' };
+  var BRAND = '#2f6f8f';
+  var MUTED = '#8a99a5';
+
+  var editor = document.getElementById('editor');
+  var nameInput = document.getElementById('userName');
+  var titleInput = document.getElementById('songTitle');
+
+  // Mémorisation du nom dans le navigateur
+  try { nameInput.value = localStorage.getItem('chorale_nom') || ''; } catch (e) {}
+  nameInput.addEventListener('input', function () {
+    try { localStorage.setItem('chorale_nom', nameInput.value); } catch (e) {}
+  });
+
+  // Chaque ligne = un <div> de premier niveau
+  function normalize() {
+    var nodes = Array.prototype.slice.call(editor.childNodes);
+    nodes.forEach(function (n) {
+      if (n.nodeType === 3) {
+        var d = document.createElement('div');
+        d.dataset.color = 'black';
+        n.parentNode.insertBefore(d, n);
+        d.appendChild(n);
+      } else if (n.nodeType === 1 && n.tagName !== 'DIV') {
+        var d2 = document.createElement('div');
+        d2.dataset.color = 'black';
+        while (n.firstChild) d2.appendChild(n.firstChild);
+        n.parentNode.replaceChild(d2, n);
+      }
+    });
+    if (!editor.firstChild) {
+      var e = document.createElement('div');
+      e.dataset.color = 'black';
+      e.appendChild(document.createElement('br'));
+      editor.appendChild(e);
+    }
+    Array.prototype.forEach.call(editor.children, function (c) {
+      if (!c.dataset.color) c.dataset.color = 'black';
+    });
+  }
+  editor.addEventListener('input', normalize);
+
+  // Collage en texte brut, une ligne = un div
+  editor.addEventListener('paste', function (ev) {
+    ev.preventDefault();
+    var text = (ev.clipboardData || window.clipboardData).getData('text/plain');
+    text = text.replace(/\r\n?/g, '\n');
+    var lines = text.split('\n');
+    var sel = window.getSelection();
+    if (!sel.rangeCount) return;
+    var range = sel.getRangeAt(0);
+    range.deleteContents();
+
+    // Trouver la ligne courante
+    var node = range.startContainer;
+    while (node && node.parentNode !== editor) node = node.parentNode;
+    var current = node || editor.lastElementChild;
+    var color = (current && current.dataset.color) || 'black';
+
+    // Texte après le curseur dans la ligne courante
+    var tail = document.createRange();
+    tail.setStart(range.endContainer, range.endOffset);
+    tail.setEndAfter(current.lastChild || current);
+    var tailFrag = tail.extractContents();
+
+    // Première ligne collée : dans la ligne courante
+    var first = document.createTextNode(lines[0]);
+    if (current.childNodes.length === 1 && current.firstChild.nodeName === 'BR') {
+      current.removeChild(current.firstChild);
+    }
+    current.appendChild(first);
+
+    var last = current;
+    for (var i = 1; i < lines.length; i++) {
+      var d = document.createElement('div');
+      d.dataset.color = color;
+      if (lines[i] === '') d.appendChild(document.createElement('br'));
+      else d.appendChild(document.createTextNode(lines[i]));
+      last.parentNode.insertBefore(d, last.nextSibling);
+      last = d;
+    }
+    // Remettre la fin de ligne d'origine
+    if (tailFrag.textContent.length) {
+      if (last.firstChild && last.firstChild.nodeName === 'BR') last.removeChild(last.firstChild);
+      last.appendChild(tailFrag);
+    }
+    // Curseur à la fin du texte collé
+    var r = document.createRange();
+    r.selectNodeContents(last);
+    r.collapse(false);
+    sel.removeAllRanges();
+    sel.addRange(r);
+    normalize();
+  });
+
+  // Boutons de couleur (mousedown pour conserver la sélection)
+  document.querySelectorAll('.toolbar button[data-color]').forEach(function (btn) {
+    btn.addEventListener('mousedown', function (e) { e.preventDefault(); });
+    btn.addEventListener('click', function () {
+      var sel = window.getSelection();
+      if (!sel.rangeCount) return;
+      var range = sel.getRangeAt(0);
+      if (!editor.contains(range.commonAncestorContainer)) return;
+      normalize();
+      Array.prototype.forEach.call(editor.children, function (line) {
+        if (range.intersectsNode(line)) line.dataset.color = btn.dataset.color;
+      });
+    });
+  });
+
+  // Export PDF
+  document.getElementById('exportPdf').addEventListener('click', function () {
+    normalize();
+    var jsPDF = window.jspdf.jsPDF;
+    var doc = new jsPDF({ unit: 'mm', format: 'a4' });
+    var W = 210, H = 297, M = 20;
+    var userName = nameInput.value.trim();
+    var songTitle = titleInput.value.trim();
+
+    function hex(h) {
+      return [parseInt(h.slice(1, 3), 16), parseInt(h.slice(3, 5), 16), parseInt(h.slice(5, 7), 16)];
+    }
+    function setText(h) { var c = hex(h); doc.setTextColor(c[0], c[1], c[2]); }
+    function setDraw(h) { var c = hex(h); doc.setDrawColor(c[0], c[1], c[2]); }
+    function setFill(h) { var c = hex(h); doc.setFillColor(c[0], c[1], c[2]); }
+
+    function header(first) {
+      if (first) {
+        setFill(BRAND);
+        doc.rect(0, 0, W, 6, 'F');
+        doc.setFont('helvetica', 'bold');
+        doc.setFontSize(24);
+        setText(BRAND);
+        doc.text('LESKOBonheur', M, 22);
+        doc.setFont('helvetica', 'italic');
+        doc.setFontSize(10);
+        setText(MUTED);
+        doc.text('du chant dans les voiles', M, 28);
+        if (userName) {
+          doc.setFont('helvetica', 'normal');
+          doc.setFontSize(10);
+          doc.text(userName, W - M, 22, { align: 'right' });
+        }
+        var y = 38;
+        if (songTitle) {
+          doc.setFont('helvetica', 'bold');
+          doc.setFontSize(16);
+          setText('#1f2d3a');
+          doc.text(songTitle, M, y);
+          y += 4;
+        }
+        setDraw(BRAND);
+        doc.setLineWidth(0.5);
+        doc.line(M, y, W - M, y);
+        return y + 10;
+      }
+      setFill(BRAND);
+      doc.rect(0, 0, W, 4, 'F');
+      doc.setFont('helvetica', 'bold');
+      doc.setFontSize(10);
+      setText(BRAND);
+      doc.text('LESKOBonheur', M, 14);
+      if (songTitle) {
+        doc.setFont('helvetica', 'normal');
+        doc.text(songTitle, W - M, 14, { align: 'right' });
+      }
+      return 26;
+    }
+
+    var fontSize = 13, lh = 6.4;
+    var y = header(true);
+    doc.setFont('helvetica', 'normal');
+    doc.setFontSize(fontSize);
+
+    Array.prototype.forEach.call(editor.children, function (line) {
+      var text = line.textContent.replace(/\u00a0/g, ' ');
+      var color = COLORS[line.dataset.color] || COLORS.black;
+      if (text.trim() === '') { y += lh; return; }
+      doc.setFont('helvetica', 'normal');
+      doc.setFontSize(fontSize);
+      setText(color);
+      var wrapped = doc.splitTextToSize(text, W - 2 * M);
+      wrapped.forEach(function (w) {
+        if (y > H - 22) {
+          doc.addPage();
+          y = header(false);
+          doc.setFont('helvetica', 'normal');
+          doc.setFontSize(fontSize);
+          setText(color);
+        }
+        doc.text(w, M, y);
+        y += lh;
+      });
+    });
+
+    // Pied de page : date à gauche, page X / N à droite
+    var n = doc.getNumberOfPages();
+    var dateStr = new Date().toLocaleDateString('fr-FR', { day: 'numeric', month: 'long', year: 'numeric' });
+    for (var i = 1; i <= n; i++) {
+      doc.setPage(i);
+      setDraw('#c9d6de');
+      doc.setLineWidth(0.3);
+      doc.line(M, H - 16, W - M, H - 16);
+      doc.setFont('helvetica', 'normal');
+      doc.setFontSize(9);
+      setText(MUTED);
+      doc.text(dateStr, M, H - 10);
+      doc.text('page ' + i + ' / ' + n, W - M, H - 10, { align: 'right' });
+    }
+
+    var base = (songTitle || 'paroles').replace(/[\\/:*?"<>|]+/g, '').trim() || 'paroles';
+    doc.save(base + '.pdf');
+  });
+})();
+</script>
+</body>
+</html>
