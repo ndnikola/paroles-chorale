@@ -144,16 +144,16 @@
   </div>
 
   <div class="toolbar">
-    <button class="b-blue"   data-color="blue">Grave</button>
-    <button class="b-pink"   data-color="pink">Aigue</button>
-    <button class="b-orange" data-color="orange">Seul</button>
+    <button class="b-blue"   data-color="blue"   title="Ctrl+1">Grave</button>
+    <button class="b-pink"   data-color="pink"   title="Ctrl+2">Aigue</button>
+    <button class="b-orange" data-color="orange" title="Ctrl+3">Seul</button>
     <button class="b-black"  data-color="black">Tous</button>
     <button class="b-new" id="newText">Nouveau</button>
     <button class="b-pdf" id="exportPdf">Exporter en PDF</button>
   </div>
 
   <div id="editor" contenteditable="true" spellcheck="false"><div><br></div></div>
-  <div class="hint">Colle les paroles, sélectionne un mot, un bout de phrase ou plusieurs lignes, puis clique sur Grave, Aigue, Seul ou Tous. Seule la sélection est colorée. Le texte est sauvegardé automatiquement dans ce navigateur.</div>
+  <div class="hint">Colle les paroles, sélectionne un mot, un bout de phrase ou plusieurs lignes, puis clique sur Grave, Aigue, Seul ou Tous (raccourcis : Ctrl+1, Ctrl+2, Ctrl+3). Seule la sélection est colorée. Le texte est sauvegardé automatiquement dans ce navigateur.</div>
 
   <footer>LESKOBonheur — du chant dans les voiles 🌊</footer>
 </div>
@@ -480,9 +480,7 @@
     btn.addEventListener('pointerdown', keepSelection);
   });
 
-  document.querySelectorAll('.toolbar button[data-color]').forEach(function (btn) {
-    btn.addEventListener('click', function () {
-      var color = btn.dataset.color;
+  function applyColor(color) {
       normalize();
       var range = null;
       var sel = window.getSelection();
@@ -506,7 +504,25 @@
       }
       applySel({ s: s, e: e });
       scheduleSave();
-    });
+  }
+
+  document.querySelectorAll('.toolbar button[data-color]').forEach(function (btn) {
+    btn.addEventListener('click', function () { applyColor(btn.dataset.color); });
+  });
+
+  // Raccourcis clavier : Ctrl+1 grave, Ctrl+2 aigue, Ctrl+3 seul (Cmd sur Mac)
+  // e.code fonctionne aussi sur clavier AZERTY, où les chiffres demandent Maj.
+  var SHORTCUTS = {
+    Digit1: 'blue', Numpad1: 'blue',
+    Digit2: 'pink', Numpad2: 'pink',
+    Digit3: 'orange', Numpad3: 'orange'
+  };
+  editor.addEventListener('keydown', function (e) {
+    if (!(e.ctrlKey || e.metaKey) || e.altKey || e.shiftKey) return;
+    var color = SHORTCUTS[e.code];
+    if (!color) return;
+    e.preventDefault();
+    applyColor(color);
   });
 
   // ================= Nouveau texte =================
