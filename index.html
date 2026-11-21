@@ -14,6 +14,7 @@
     --muted: #8a99a5;
     --blue: #2f6f8f;
     --pink: #e0559a;
+    --orange: #e8832a;
     --black: #1f2d3a;
   }
   * { box-sizing: border-box; }
@@ -63,7 +64,7 @@
     gap: 4px;
   }
   .fields input {
-    font: 15px Georgia, serif;
+    font: 16px Georgia, serif;
     padding: 8px 10px;
     border: 1px solid #c9d6de;
     border-radius: 6px;
@@ -79,17 +80,22 @@
   .toolbar button {
     border: 0;
     border-radius: 6px;
-    padding: 9px 16px;
+    padding: 10px 16px;
     font-size: 14px;
     font-weight: bold;
     color: #fff;
     cursor: pointer;
+    -webkit-user-select: none;
+    user-select: none;
+    touch-action: manipulation;
   }
   .toolbar button:hover { filter: brightness(1.1); }
   .b-blue { background: var(--blue); }
   .b-pink { background: var(--pink); }
+  .b-orange { background: var(--orange); }
   .b-black { background: var(--black); }
-  .b-pdf { background: #fff; color: var(--brand) !important; border: 2px solid var(--brand) !important; margin-left: auto; }
+  .b-new { background: #fff; color: var(--muted) !important; border: 1px solid #c9d6de !important; margin-left: auto; }
+  .b-pdf { background: #fff; color: var(--brand) !important; border: 2px solid var(--brand) !important; }
   #editor {
     margin: 0 24px 8px;
     min-height: 420px;
@@ -103,9 +109,10 @@
   }
   #editor:focus { border-color: var(--brand); box-shadow: 0 0 0 3px rgba(47,111,143,.15); }
   #editor > div { min-height: 1.6em; }
-  #editor > div[data-color="blue"]  { color: var(--blue); }
-  #editor > div[data-color="pink"]  { color: var(--pink); }
-  #editor > div[data-color="black"] { color: var(--black); }
+  #editor span[data-c="blue"] { color: var(--blue); }
+  #editor span[data-c="pink"] { color: var(--pink); }
+  #editor span[data-c="orange"] { color: var(--orange); }
+  #editor span[data-c="black"] { color: var(--black); }
   .hint {
     font-family: Arial, sans-serif;
     font-size: 12px;
@@ -137,21 +144,23 @@
   </div>
 
   <div class="toolbar">
-    <button class="b-blue"  data-color="blue">Bleu</button>
-    <button class="b-pink"  data-color="pink">Rose</button>
-    <button class="b-black" data-color="black">Noir</button>
+    <button class="b-blue"   data-color="blue">Grave</button>
+    <button class="b-pink"   data-color="pink">Aigue</button>
+    <button class="b-orange" data-color="orange">Seul</button>
+    <button class="b-black"  data-color="black">Tous</button>
+    <button class="b-new" id="newText">Nouveau</button>
     <button class="b-pdf" id="exportPdf">Exporter en PDF</button>
   </div>
 
-  <div id="editor" contenteditable="true" spellcheck="false"><div data-color="black"><br></div></div>
-  <div class="hint">Colle les paroles, sélectionne une ou plusieurs lignes, puis clique sur une couleur.</div>
+  <div id="editor" contenteditable="true" spellcheck="false"><div><br></div></div>
+  <div class="hint">Colle les paroles, sélectionne un mot, un bout de phrase ou plusieurs lignes, puis clique sur Grave, Aigue, Seul ou Tous. Seule la sélection est colorée. Le texte est sauvegardé automatiquement dans ce navigateur.</div>
 
   <footer>LESKOBonheur — du chant dans les voiles 🌊</footer>
 </div>
 
 <script>
 (function () {
-  var COLORS = { blue: '#2f6f8f', pink: '#e0559a', black: '#1f2d3a' };
+  var COLORS = { blue: '#2f6f8f', pink: '#e0559a', orange: '#e8832a', black: '#1f2d3a' };
   var BRAND = '#2f6f8f';
   var MUTED = '#8a99a5';
 
@@ -159,116 +168,383 @@
   var nameInput = document.getElementById('userName');
   var titleInput = document.getElementById('songTitle');
 
-  // Mémorisation du nom dans le navigateur
-  try { nameInput.value = localStorage.getItem('chorale_nom') || ''; } catch (e) {}
-  nameInput.addEventListener('input', function () {
-    try { localStorage.setItem('chorale_nom', nameInput.value); } catch (e) {}
-  });
+  function store(key, val) { try { localStorage.setItem(key, val); } catch (e) {} }
+  function load(key) { try { return localStorage.getItem(key); } catch (e) { return null; } }
 
-  // Chaque ligne = un <div> de premier niveau
-  function normalize() {
-    var nodes = Array.prototype.slice.call(editor.childNodes);
-    nodes.forEach(function (n) {
-      if (n.nodeType === 3) {
-        var d = document.createElement('div');
-        d.dataset.color = 'black';
-        n.parentNode.insertBefore(d, n);
-        d.appendChild(n);
-      } else if (n.nodeType === 1 && n.tagName !== 'DIV') {
-        var d2 = document.createElement('div');
-        d2.dataset.color = 'black';
-        while (n.firstChild) d2.appendChild(n.firstChild);
-        n.parentNode.replaceChild(d2, n);
+  // ================= Modèle : une ligne = liste de segments {c, t} =================
+
+  function mergeSegs(segs) {
+    var out = [];
+    segs.forEach(function (s) {
+      if (!s.t) return;
+      var last = out[out.length - 1];
+      if (last && last.c === s.c) last.t += s.t;
+      else out.push({ c: s.c, t: s.t });
+    });
+    return out;
+  }
+
+  // Lit les segments d'une ligne du DOM (couleur = span[data-c] le plus proche)
+  function getSegments(line) {
+    var segs = [];
+    var walker = document.createTreeWalker(line, NodeFilter.SHOW_TEXT);
+    var n;
+    while ((n = walker.nextNode())) {
+      if (!n.data.length) continue;
+      var c = 'black', p = n.parentNode;
+      while (p && p !== line) {
+        if (p.nodeType === 1 && p.dataset && COLORS[p.dataset.c]) { c = p.dataset.c; break; }
+        p = p.parentNode;
+      }
+      segs.push({ c: c, t: n.data });
+    }
+    return mergeSegs(segs);
+  }
+
+  // Reconstruit proprement une ligne à partir de ses segments
+  function buildLine(line, segs) {
+    while (line.firstChild) line.removeChild(line.firstChild);
+    line.removeAttribute('style');
+    line.removeAttribute('data-color');
+    segs = mergeSegs(segs);
+    if (!segs.length) { line.appendChild(document.createElement('br')); return; }
+    segs.forEach(function (s) {
+      if (s.c === 'black') {
+        line.appendChild(document.createTextNode(s.t));
+      } else {
+        var sp = document.createElement('span');
+        sp.dataset.c = s.c;
+        sp.appendChild(document.createTextNode(s.t));
+        line.appendChild(sp);
       }
     });
-    if (!editor.firstChild) {
-      var e = document.createElement('div');
-      e.dataset.color = 'black';
-      e.appendChild(document.createElement('br'));
-      editor.appendChild(e);
+  }
+
+  function newLine(segs) {
+    var d = document.createElement('div');
+    buildLine(d, segs || []);
+    return d;
+  }
+
+  // Applique une couleur à la portion [lo, hi[ d'une liste de segments
+  function recolor(segs, lo, hi, color) {
+    var out = [], pos = 0;
+    segs.forEach(function (s) {
+      var a = pos, b = pos + s.t.length;
+      pos = b;
+      if (b <= lo || a >= hi) { out.push(s); return; }
+      var c1 = Math.max(lo, a) - a, c2 = Math.min(hi, b) - a;
+      if (c1 > 0) out.push({ c: s.c, t: s.t.slice(0, c1) });
+      out.push({ c: color, t: s.t.slice(c1, c2) });
+      if (c2 < s.t.length) out.push({ c: s.c, t: s.t.slice(c2) });
+    });
+    return mergeSegs(out);
+  }
+
+  // ================= Positions (indépendantes du DOM) =================
+
+  function lineOf(node) {
+    while (node && node.parentNode !== editor) node = node.parentNode;
+    return node;
+  }
+  function lineLen(i) { return editor.children[i].textContent.length; }
+
+  function charPos(container, offset, isEnd) {
+    var n = editor.children.length;
+    if (!n) return null;
+    if (container === editor) {
+      if (isEnd) {
+        if (offset <= 0) return { i: 0, o: 0 };
+        var k = Math.min(offset, n) - 1;
+        return { i: k, o: lineLen(k) };
+      }
+      if (offset >= n) return { i: n - 1, o: lineLen(n - 1) };
+      return { i: offset, o: 0 };
     }
-    Array.prototype.forEach.call(editor.children, function (c) {
-      if (!c.dataset.color) c.dataset.color = 'black';
+    var line = lineOf(container);
+    if (!line || line.parentNode !== editor) return null;
+    var i = Array.prototype.indexOf.call(editor.children, line);
+    var r = document.createRange();
+    r.selectNodeContents(line);
+    try { r.setEnd(container, offset); } catch (e) { return null; }
+    return { i: i, o: r.toString().length };
+  }
+
+  function posFromChar(p) {
+    var line = editor.children[Math.min(p.i, editor.children.length - 1)];
+    var walker = document.createTreeWalker(line, NodeFilter.SHOW_TEXT);
+    var remaining = p.o, n, last = null;
+    while ((n = walker.nextNode())) {
+      last = n;
+      if (remaining <= n.length) return { node: n, offset: remaining };
+      remaining -= n.length;
+    }
+    if (last) return { node: last, offset: last.length };
+    return { node: line, offset: 0 };
+  }
+
+  var savedRange = null;
+
+  function captureSel() {
+    var sel = window.getSelection();
+    if (!sel.rangeCount) return null;
+    var r = sel.getRangeAt(0);
+    if (!editor.contains(r.commonAncestorContainer)) return null;
+    return { s: charPos(r.startContainer, r.startOffset, false), e: charPos(r.endContainer, r.endOffset, true) };
+  }
+
+  function applySel(c) {
+    if (!c || !c.s || !c.e) return;
+    var a = posFromChar(c.s), b = posFromChar(c.e);
+    var r = document.createRange();
+    try {
+      r.setStart(a.node, a.offset);
+      r.setEnd(b.node, b.offset);
+    } catch (e) { return; }
+    var sel = window.getSelection();
+    sel.removeAllRanges();
+    sel.addRange(r);
+    savedRange = r.cloneRange();
+  }
+
+  // ================= Normalisation =================
+
+  function lineIsDirty(line) {
+    var els = line.getElementsByTagName('*');
+    var hasText = line.textContent.length > 0;
+    for (var i = 0; i < els.length; i++) {
+      var el = els[i];
+      if (el.tagName === 'BR') { if (hasText) return true; continue; }
+      if (el.tagName !== 'SPAN') return true;
+      if (!COLORS[el.dataset.c] || el.dataset.c === 'black') return true;
+      if (el.hasAttribute('style')) return true;
+      if (el.parentNode !== line) return true;
+      if (!el.textContent.length) return true;
+    }
+    return false;
+  }
+
+  function normalize() {
+    Array.prototype.slice.call(editor.childNodes).forEach(function (n) {
+      if (n.nodeType === 3 || (n.nodeType === 1 && n.tagName !== 'DIV')) {
+        var d = document.createElement('div');
+        n.parentNode.insertBefore(d, n);
+        if (n.nodeType === 3) d.appendChild(n);
+        else { while (n.firstChild) d.appendChild(n.firstChild); n.parentNode.removeChild(n); }
+      }
+    });
+    if (!editor.firstChild) editor.appendChild(newLine([]));
+    var dirty = Array.prototype.filter.call(editor.children, lineIsDirty);
+    if (dirty.length) {
+      var cap = captureSel();
+      dirty.forEach(function (line) { buildLine(line, getSegments(line)); });
+      applySel(cap);
+    }
+  }
+
+  // ================= Sauvegarde automatique =================
+
+  var saveTimer = null;
+  function saveNow() {
+    var lines = Array.prototype.map.call(editor.children, getSegments);
+    store('chorale_texte_v2', JSON.stringify(lines));
+    store('chorale_titre', titleInput.value);
+  }
+  function scheduleSave() {
+    clearTimeout(saveTimer);
+    saveTimer = setTimeout(saveNow, 300);
+  }
+
+  function restore() {
+    nameInput.value = load('chorale_nom') || '';
+    titleInput.value = load('chorale_titre') || '';
+    var raw = load('chorale_texte_v2');
+    var lines = null;
+    try {
+      if (raw) {
+        lines = JSON.parse(raw);
+      } else {
+        // Ancien format : une couleur par ligne
+        var old = load('chorale_texte');
+        if (old) {
+          lines = JSON.parse(old).map(function (l) { return [{ c: COLORS[l.c] ? l.c : 'black', t: l.t || '' }]; });
+        }
+      }
+    } catch (e) { lines = null; }
+    if (!Array.isArray(lines) || !lines.length) return;
+    while (editor.firstChild) editor.removeChild(editor.firstChild);
+    lines.forEach(function (segs) {
+      var clean = (Array.isArray(segs) ? segs : []).map(function (s) {
+        return { c: COLORS[s.c] ? s.c : 'black', t: String(s.t || '') };
+      });
+      editor.appendChild(newLine(clean));
     });
   }
-  editor.addEventListener('input', normalize);
+  restore();
+  normalize();
 
-  // Collage en texte brut, une ligne = un div
+  nameInput.addEventListener('input', function () { store('chorale_nom', nameInput.value); });
+  titleInput.addEventListener('input', scheduleSave);
+  editor.addEventListener('input', function () { normalize(); scheduleSave(); });
+
+  // Retour à la ligne forcé = nouvelle ligne
+  editor.addEventListener('beforeinput', function (e) {
+    if (e.inputType === 'insertLineBreak') {
+      e.preventDefault();
+      document.execCommand('insertParagraph');
+    }
+  });
+
+  // Mémorise la dernière sélection faite dans l'éditeur
+  document.addEventListener('selectionchange', function () {
+    var sel = window.getSelection();
+    if (!sel.rangeCount) return;
+    var r = sel.getRangeAt(0);
+    if (editor.contains(r.commonAncestorContainer)) savedRange = r.cloneRange();
+  });
+
+  // ================= Collage en texte brut =================
+
   editor.addEventListener('paste', function (ev) {
     ev.preventDefault();
     var text = (ev.clipboardData || window.clipboardData).getData('text/plain');
     text = text.replace(/\r\n?/g, '\n');
     var lines = text.split('\n');
     var sel = window.getSelection();
-    if (!sel.rangeCount) return;
-    var range = sel.getRangeAt(0);
-    range.deleteContents();
+    normalize();
 
-    // Trouver la ligne courante
-    var node = range.startContainer;
-    while (node && node.parentNode !== editor) node = node.parentNode;
-    var current = node || editor.lastElementChild;
-    var color = (current && current.dataset.color) || 'black';
+    var range = sel.rangeCount ? sel.getRangeAt(0) : null;
+    if (!range || !editor.contains(range.commonAncestorContainer) ||
+        !lineOf(range.startContainer) || !lineOf(range.endContainer)) {
+      range = document.createRange();
+      range.selectNodeContents(editor.lastElementChild);
+      range.collapse(false);
+    }
+    var startLine = lineOf(range.startContainer);
+    var endLine = lineOf(range.endContainer);
 
-    // Texte après le curseur dans la ligne courante
+    // Fin de la ligne d'arrivée (après la sélection)
     var tail = document.createRange();
     tail.setStart(range.endContainer, range.endOffset);
-    tail.setEndAfter(current.lastChild || current);
+    if (endLine.lastChild) tail.setEndAfter(endLine.lastChild);
+    else tail.setEnd(endLine, 0);
     var tailFrag = tail.extractContents();
 
-    // Première ligne collée : dans la ligne courante
-    var first = document.createTextNode(lines[0]);
-    if (current.childNodes.length === 1 && current.firstChild.nodeName === 'BR') {
-      current.removeChild(current.firstChild);
-    }
-    current.appendChild(first);
+    // Suppression de la sélection éventuelle
+    range.deleteContents();
+    if (endLine !== startLine && endLine.parentNode === editor) editor.removeChild(endLine);
 
-    var last = current;
+    if (startLine.childNodes.length === 1 && startLine.firstChild.nodeName === 'BR') {
+      startLine.removeChild(startLine.firstChild);
+    }
+    if (lines[0] !== '') startLine.appendChild(document.createTextNode(lines[0]));
+
+    var last = startLine;
     for (var i = 1; i < lines.length; i++) {
-      var d = document.createElement('div');
-      d.dataset.color = color;
-      if (lines[i] === '') d.appendChild(document.createElement('br'));
-      else d.appendChild(document.createTextNode(lines[i]));
+      var d = newLine(lines[i] ? [{ c: 'black', t: lines[i] }] : []);
       last.parentNode.insertBefore(d, last.nextSibling);
       last = d;
     }
-    // Remettre la fin de ligne d'origine
-    if (tailFrag.textContent.length) {
+
+    // Remise de la fin de ligne d'origine
+    var tailText = tailFrag.textContent;
+    if (tailText.length) {
       if (last.firstChild && last.firstChild.nodeName === 'BR') last.removeChild(last.firstChild);
       last.appendChild(tailFrag);
     }
+    if (!last.firstChild) last.appendChild(document.createElement('br'));
+
     // Curseur à la fin du texte collé
     var r = document.createRange();
     r.selectNodeContents(last);
     r.collapse(false);
+    if (tailText.length) {
+      var walker = document.createTreeWalker(last, NodeFilter.SHOW_TEXT);
+      var total = last.textContent.length - tailText.length, count = 0, n;
+      while ((n = walker.nextNode())) {
+        if (count + n.length >= total) { r.setStart(n, total - count); r.collapse(true); break; }
+        count += n.length;
+      }
+    }
     sel.removeAllRanges();
     sel.addRange(r);
     normalize();
+    scheduleSave();
   });
 
-  // Boutons de couleur (mousedown pour conserver la sélection)
+  // ================= Boutons de couleur (sélection uniquement) =================
+
+  function keepSelection(e) { e.preventDefault(); }
+  document.querySelectorAll('.toolbar button').forEach(function (btn) {
+    btn.addEventListener('mousedown', keepSelection);
+    btn.addEventListener('pointerdown', keepSelection);
+  });
+
   document.querySelectorAll('.toolbar button[data-color]').forEach(function (btn) {
-    btn.addEventListener('mousedown', function (e) { e.preventDefault(); });
     btn.addEventListener('click', function () {
-      var sel = window.getSelection();
-      if (!sel.rangeCount) return;
-      var range = sel.getRangeAt(0);
-      if (!editor.contains(range.commonAncestorContainer)) return;
+      var color = btn.dataset.color;
       normalize();
-      Array.prototype.forEach.call(editor.children, function (line) {
-        if (range.intersectsNode(line)) line.dataset.color = btn.dataset.color;
-      });
+      var range = null;
+      var sel = window.getSelection();
+      if (sel.rangeCount && editor.contains(sel.getRangeAt(0).commonAncestorContainer)) {
+        range = sel.getRangeAt(0);
+      } else {
+        range = savedRange;
+      }
+      if (!range || range.collapsed) return;
+
+      var s = charPos(range.startContainer, range.startOffset, false);
+      var e = charPos(range.endContainer, range.endOffset, true);
+      if (!s || !e) return;
+
+      for (var i = s.i; i <= e.i; i++) {
+        var line = editor.children[i];
+        var segs = getSegments(line);
+        var lo = (i === s.i) ? s.o : 0;
+        var hi = (i === e.i) ? e.o : lineLen(i);
+        if (hi > lo) buildLine(line, recolor(segs, lo, hi, color));
+      }
+      applySel({ s: s, e: e });
+      scheduleSave();
     });
   });
 
-  // Export PDF
+  // ================= Nouveau texte =================
+
+  document.getElementById('newText').addEventListener('click', function () {
+    if (!confirm('Effacer le texte et le titre ?')) return;
+    while (editor.firstChild) editor.removeChild(editor.firstChild);
+    editor.appendChild(newLine([]));
+    titleInput.value = '';
+    savedRange = null;
+    saveNow();
+  });
+
+  // ================= Nettoyage du texte pour la police PDF =================
+
+  var WINANSI_EXTRA = '€‚ƒ„…†‡ˆ‰Š‹ŒŽ‘’“”•–—˜™š›œžŸ';
+  function toPdfText(s) {
+    s = s.replace(/[\u00a0\u202f\u2009\u2007]/g, ' ')
+         .replace(/\t/g, '  ')
+         .replace(/\u2032/g, "'");
+    var out = '';
+    for (var i = 0; i < s.length; i++) {
+      var ch = s.charAt(i), code = s.charCodeAt(i);
+      if ((code >= 32 && code <= 0xFF) || WINANSI_EXTRA.indexOf(ch) > -1) out += ch;
+    }
+    return out;
+  }
+
+  // ================= Export PDF =================
+
   document.getElementById('exportPdf').addEventListener('click', function () {
     normalize();
     var jsPDF = window.jspdf.jsPDF;
     var doc = new jsPDF({ unit: 'mm', format: 'a4' });
     var W = 210, H = 297, M = 20;
-    var userName = nameInput.value.trim();
-    var songTitle = titleInput.value.trim();
+    var maxX = W - M;
+    var userName = toPdfText(nameInput.value).trim();
+    var songTitle = toPdfText(titleInput.value).trim();
 
     function hex(h) {
       return [parseInt(h.slice(1, 3), 16), parseInt(h.slice(3, 5), 16), parseInt(h.slice(5, 7), 16)];
@@ -294,18 +570,18 @@
           doc.setFontSize(10);
           doc.text(userName, W - M, 22, { align: 'right' });
         }
-        var y = 38;
+        var y0 = 38;
         if (songTitle) {
           doc.setFont('helvetica', 'bold');
           doc.setFontSize(16);
           setText('#1f2d3a');
-          doc.text(songTitle, M, y);
-          y += 4;
+          doc.text(songTitle, M, y0);
+          y0 += 4;
         }
         setDraw(BRAND);
         doc.setLineWidth(0.5);
-        doc.line(M, y, W - M, y);
-        return y + 10;
+        doc.line(M, y0, W - M, y0);
+        return y0 + 10;
       }
       setFill(BRAND);
       doc.rect(0, 0, W, 4, 'F');
@@ -325,25 +601,57 @@
     doc.setFont('helvetica', 'normal');
     doc.setFontSize(fontSize);
 
+    function ensureSpace() {
+      if (y > H - 22) {
+        doc.addPage();
+        y = header(false);
+        doc.setFont('helvetica', 'normal');
+        doc.setFontSize(fontSize);
+      }
+    }
+
     Array.prototype.forEach.call(editor.children, function (line) {
-      var text = line.textContent.replace(/\u00a0/g, ' ');
-      var color = COLORS[line.dataset.color] || COLORS.black;
-      if (text.trim() === '') { y += lh; return; }
-      doc.setFont('helvetica', 'normal');
-      doc.setFontSize(fontSize);
-      setText(color);
-      var wrapped = doc.splitTextToSize(text, W - 2 * M);
-      wrapped.forEach(function (w) {
-        if (y > H - 22) {
-          doc.addPage();
-          y = header(false);
-          doc.setFont('helvetica', 'normal');
-          doc.setFontSize(fontSize);
-          setText(color);
-        }
-        doc.text(w, M, y);
-        y += lh;
+      var segs = getSegments(line).map(function (s) { return { c: s.c, t: toPdfText(s.t) }; });
+      var full = segs.map(function (s) { return s.t; }).join('');
+      if (full.trim() === '') { y += lh; return; }
+
+      ensureSpace();
+      var x = M, first = true;
+      function nextRow() { y += lh; ensureSpace(); x = M; first = false; }
+
+      segs.forEach(function (seg) {
+        var color = COLORS[seg.c] || COLORS.black;
+        seg.t.split(/(\s+)/).forEach(function (tok) {
+          if (!tok) return;
+          var w = doc.getTextWidth(tok);
+          if (/^\s+$/.test(tok)) {
+            if (x === M && !first) return;      // pas d'espace en début de ligne repliée
+            if (x + w > maxX) return;           // espace de fin de ligne
+            x += w;
+            return;
+          }
+          if (x + w > maxX && x > M) nextRow();
+          if (w > maxX - M) {
+            // mot plus long qu'une ligne : découpe caractère par caractère
+            var chunk = '';
+            for (var k = 0; k < tok.length; k++) {
+              var ch = tok.charAt(k);
+              if (doc.getTextWidth(chunk + ch) > maxX - x && chunk) {
+                setText(color); doc.text(chunk, x, y);
+                nextRow();
+                chunk = '';
+              }
+              chunk += ch;
+            }
+            if (chunk) { setText(color); doc.text(chunk, x, y); x += doc.getTextWidth(chunk); }
+          } else {
+            setText(color);
+            doc.text(tok, x, y);
+            x += w;
+          }
+        });
       });
+      y += lh;
     });
 
     // Pied de page : date à gauche, page X / N à droite
